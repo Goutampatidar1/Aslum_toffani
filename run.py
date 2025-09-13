@@ -6,6 +6,7 @@ from app.routes.user_routes import user_bp
 from app.routes.camera_routes import camera_bp
 from app.services.stream_services import run_websocket_server
 from app.routes.stream_routes import stream_bp
+from app.routes.attendance_routes import attendance_bp
 
 # Setup logging
 logging.basicConfig(
@@ -16,6 +17,7 @@ app = Flask(__name__)
 app.register_blueprint(user_bp)
 app.register_blueprint(camera_bp)
 app.register_blueprint(stream_bp)
+app.register_blueprint(attendance_bp)
 
 
 @app.errorhandler(404)
@@ -54,7 +56,7 @@ if __name__ == "__main__":
         logging.info("WebSocket thread started.")
 
         logging.info("Starting Flask app...")
-        app.run(debug=True, use_reloader=False)
+        app.run(host="127.0.0.1" , debug=True, use_reloader=False)
 
     except Exception as e:
         logging.error(f"Flask encountered an error: {e}")

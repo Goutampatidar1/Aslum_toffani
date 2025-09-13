@@ -13,7 +13,7 @@ print(f"DATABASE NAME : {DATABASE_NAME} , DATABASE_URL : {DATABASE_URL}")
 try:
     client = MongoClient(DATABASE_URL, serverSelectionTimeoutMS=5000)
     client.server_info()
-    db = [DATABASE_NAME]
+    db = client[f"{DATABASE_NAME}"]
     print("DATABSE CONNNECTED SUCCESSFULLY")
 
     try:

@@ -1,6 +1,6 @@
 from app.config import db
 from bson.objectid import ObjectId
-from utils.helper import str_object_id
+from app.utils.helper import str_object_id
 from pymongo.errors import DuplicateKeyError
 from app.models.user_model import User
 import os
