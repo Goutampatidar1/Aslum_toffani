@@ -1,10 +1,14 @@
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
 from app.services.user_service import create_user, get_user, list_all_user, delete_user
+import logging
 import os
 
 # from dotenv import load_dotenv
 # load_dotenv()
+logging.basicConfig(
+    level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
+)
 
 user_bp = Blueprint("user_bp", __name__)
 
@@ -17,7 +21,7 @@ def allowed_files(filename):
 
 
 # route for adading user
-@user_bp.route("/users", methods=["POST"])
+@user_bp.route("/user", methods=["POST"])
 def add_user():
     if "image" not in request.files:
         return jsonify({"error": "Image file is required"}), 400
@@ -25,7 +29,7 @@ def add_user():
     image = request.files["image"]
     data = request.form.to_dict()
 
-    if not all(k in data for k in ("name", "emailId", "phoneNumber")):
+    if not all(k in data for k in ("name", "email_id", "phoneNumber")):
         return jsonify({"error": "Missing required fields"}), 400
 
     if image.filename == "" or not allowed_files(image.filename):
@@ -33,6 +37,8 @@ def add_user():
 
     filename = secure_filename(image.filename)
     image_path = os.path.join(UPLOAD_FOLDER, filename)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
     try:
         image.save(image_path)
     except Exception as e:
@@ -40,9 +46,8 @@ def add_user():
 
     try:
         user_id, error = create_user(data, image_path)
-        # have to check this
         if error:
-            raise Exception
+            return jsonify({"error": "User Already Exist "}), 403
         return (
             jsonify({"message": "User created and image processed", "id": user_id}),
             201,
@@ -54,6 +59,7 @@ def add_user():
     except Exception as e:
         if os.path.exists(image_path):
             os.remove(image_path)
+        logging.error(f"Unexpected error: {e}")
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 

@@ -1,6 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 from app.config import db
+from app.models.attendance_model import Attendance
 import logging
 
 logging.basicConfig(

@@ -1,7 +1,7 @@
 from app.config import db
 from bson.objectid import ObjectId
 from app.utils.helper import str_object_id
-from pymongo.errors import DuplicateKeyError
+from app.detection_app.face_encoder import encode_face
 from app.models.user_model import User
 import os
 
@@ -16,28 +16,29 @@ def list_all_user():
 
 # function for creating the user
 def create_user(user_data, image_path):
-        user = User(
-            name=user_data["name"],
-            email_id=user_data["email_id"],
-            contact_number=user_data["contact_number"],
-            image=image_path,
-        )
+    user = User(
+        name=user_data["name"],
+        email_id=user_data["email_id"],
+        contact_number=user_data["contact_number"],
+        image=image_path,
+    )
 
-        existing_user = db.users.find_one({"email_id": user.email_id})
-        if existing_user:
-            raise ValueError("Email id already Exist")
+    existing_user = db.users.find_one({"email_id": user.email_id})
+    if existing_user:
+        return 0, "User Already exist"
 
-        result = db.users.insert_one(user.to_dict())
-        user_id = str(result.inserted_id)
+    result = db.users.insert_one(user.to_dict())
+    user_id = str(result.inserted_id)
 
-        # # Have to run this check Later
-        # encoded = encode_face(image_path, user.name)
-        # if not encoded:
-        #     # Optionally, you can delete the user here if encoding fails
-        #     db.users.delete_one({"_id": result.inserted_id})
-        #     raise ValueError("No face detected in the uploaded image")
+    # Encoder implemented
+    success = encode_face(image_path, user.name)
+    if not success:
+        db.users.delete_one({"_id": result.inserted_id})
+        if os.path.exists(image_path):
+            os.remove(image_path)
+        raise ValueError("No face detected in the uploaded image")
 
-        return user_id , None
+    return user_id, None
 
 
 # function for getting particular user details
