@@ -3,10 +3,19 @@ from bson.objectid import ObjectId
 from utils.helper import str_object_id
 from pymongo.errors import DuplicateKeyError
 from app.models.user_model import User
+import os
 
 
+# function for listing all the user
+def list_all_user():
+    users = list(db.users.find({}))
+    for user in users:
+        user["_id"] = str(users["_id"])
+    return users
+
+
+# function for creating the user
 def create_user(user_data, image_path):
-    try:
         user = User(
             name=user_data["name"],
             email_id=user_data["email_id"],
@@ -28,12 +37,10 @@ def create_user(user_data, image_path):
         #     db.users.delete_one({"_id": result.inserted_id})
         #     raise ValueError("No face detected in the uploaded image")
 
-        return user_id
-
-    except Exception as e:
-        print(f"error in getting error : {str(e)}")
+        return user_id , None
 
 
+# function for getting particular user details
 def get_user(user_id):
     object_id = str_object_id(user_id)
     if not object_id:
@@ -45,25 +52,33 @@ def get_user(user_id):
         return user, None
     return None, "User not found"
 
+
 # function for updating the user
 def update_user(user_id):
     pass
 
 
-# function for deleting the user
+# function for deleting the user and regenerate the embeddings
 def delete_user(user_id):
     object_id = str_object_id(user_id)
     if not object_id:
         return 0, "Invalid User ID format"
+
+    user = db.users.find_one({"_id": object_id})
+    if not user:
+        return 0, "User Not found"
+
+    image_path = user.get("image")
+    if image_path and os.path.exists(image_path):
+        try:
+            os.remove(image_path)
+        except Exception as e:
+            print(f"Error deleting image file {image_path}: {e}")
+
     result = db.users.delete_one({"_id": object_id})
     if result.deleted_count == 0:
-        return 0, "User Not Found"
+        return 0, "User not found"
+
+    # regenerate_embeddings()
+
     return result.deleted_count, None
-
-
-# function for listing all the user
-def list_all_user():
-    users = list(db.users.find({}))
-    for user in users:
-        user["_id"] = str(users["_id"])
-    return users
