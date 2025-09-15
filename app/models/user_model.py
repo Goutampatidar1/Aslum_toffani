@@ -5,6 +5,7 @@ class User:
         email_id,
         contact_number,
         image,
+        major,
         total_attendance=None,
         total_work=None,
     ):
@@ -12,7 +13,10 @@ class User:
         self.email_id = email_id
         self.contact_number = contact_number
         self.image = image
-        self.total_attendance = total_attendance or []  # list of date time
+        self.major = major
+        self.total_attendance = (
+            total_attendance or []
+        )  # list of date time and total work
         self.total_work = total_work or []  # list of reference to the atrtendace
 
     def to_dict(self):
@@ -21,6 +25,7 @@ class User:
             "emailId": self.email_id,
             "phoneNumber": self.phone_number,
             "image": self.image,
+            "major": self.major,
             "total_attendence": self.total_attendance,
             "total_work": self.total_work,
         }

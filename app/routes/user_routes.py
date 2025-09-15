@@ -29,7 +29,7 @@ def add_user():
     image = request.files["image"]
     data = request.form.to_dict()
 
-    if not all(k in data for k in ("name", "email_id", "phoneNumber")):
+    if not all(k in data for k in ("name", "email_id", "phoneNumber", "major")):
         return jsonify({"error": "Missing required fields"}), 400
 
     if image.filename == "" or not allowed_files(image.filename):

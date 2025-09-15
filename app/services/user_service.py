@@ -21,6 +21,7 @@ def create_user(user_data, image_path):
         email_id=user_data["email_id"],
         contact_number=user_data["contact_number"],
         image=image_path,
+        major=user_data["major"],
     )
 
     existing_user = db.users.find_one({"email_id": user.email_id})

@@ -53,7 +53,7 @@ def mark_attendance(user_id, action):
                     {
                         "$push": {
                             "total_attendence": {
-                                "date_time": datetime.now().isoformat()
+                                "date_time": datetime.now().isoformat(),
                             }
                         }
                     },
