@@ -12,7 +12,8 @@ logging.basicConfig(
 )
 
 
-EMB_DB = Path("../encodings/embeddings.pkl") 
+EMB_DB = Path("encodings/embeddings.pkl")
+EMB_DB.parent.mkdir(parents=True, exist_ok=True)
 DET_SIZE = (640, 640)
 USE_GPU = True
 
@@ -55,6 +56,8 @@ def encode_face(image_path, label):
         if EMB_DB.exists():
             with open(EMB_DB, "rb") as f:
                 embeddings = pickle.load(f)
+        else:
+            embeddings = []
 
         # Remove old embeddings for this label if they exist
         embeddings = [entry for entry in embeddings if entry["name"] != label]

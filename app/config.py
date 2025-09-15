@@ -11,7 +11,8 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "my-database")
 print(f"DATABASE NAME : {DATABASE_NAME} , DATABASE_URL : {DATABASE_URL}")
 
 try:
-    client = MongoClient(DATABASE_URL, serverSelectionTimeoutMS=5000)
+    # client = MongoClient(DATABASE_URL, serverSelectionTimeoutMS=5000)
+    client = MongoClient(DATABASE_URL)
     client.server_info()
     db = client[f"{DATABASE_NAME}"]
     print("DATABSE CONNNECTED SUCCESSFULLY")

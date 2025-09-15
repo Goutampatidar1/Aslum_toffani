@@ -10,7 +10,7 @@ def create_camera(data):
         url=data["url"],
     )
 
-    result = db.cameras.insert_one(Camera.to_dict())
+    result = db.cameras.insert_one(camera.to_dict())
     camera_id = str(result.inserted_id)
 
     return camera_id, None

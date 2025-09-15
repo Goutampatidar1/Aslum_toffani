@@ -3,6 +3,7 @@ from bson.objectid import ObjectId
 from app.utils.helper import str_object_id
 from app.detection_app.face_encoder import encode_face
 from app.models.user_model import User
+from app.detection_app.face_encoder import encode_face
 import os
 
 
@@ -10,8 +11,8 @@ import os
 def list_all_user():
     users = list(db.users.find({}))
     for user in users:
-        user["_id"] = str(users["_id"])
-    return users
+        user["_id"] = str(user["_id"])
+    return users , None
 
 
 # function for creating the user
@@ -81,6 +82,6 @@ def delete_user(user_id):
     if result.deleted_count == 0:
         return 0, "User not found"
 
-    # regenerate_embeddings()
+    # Regenrte the embeddings
 
     return result.deleted_count, None
