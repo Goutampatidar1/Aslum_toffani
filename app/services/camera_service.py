@@ -40,3 +40,15 @@ def fetch_all_camera():
     for camera in all_cameras:
         camera["_id"] = str(camera["_id"])
     return all_cameras , None
+
+def get_camera_by_id(camera_id):
+    object_id = str_object_id(camera_id)
+    
+    if not object_id:
+        return None
+    camera = db.cameras.find_one({"_id": object_id})
+    print(camera)
+    if camera:
+        camera["_id"] = str(camera["_id"])
+        return camera
+    return None
