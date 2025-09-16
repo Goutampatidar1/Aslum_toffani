@@ -7,6 +7,7 @@ from app.detection_app.face_encoder import encode_face
 import os
 
 
+
 # function for listing all the user
 def list_all_user():
     users = list(db.users.find({}))
@@ -16,13 +17,14 @@ def list_all_user():
 
 
 # function for creating the user
-def create_user(user_data, image_path):
+def create_user(user_data, image_path , generated_id):
     user = User(
         name=user_data["name"],
         email_id=user_data["email_id"],
         contact_number=user_data["contact_number"],
         image=image_path,
         major=user_data["major"],
+        unique_user_id= generated_id
     )
 
     existing_user = db.users.find_one({"email_id": user.email_id})

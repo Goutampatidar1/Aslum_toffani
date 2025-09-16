@@ -10,12 +10,8 @@ from collections import deque
 from pathlib import Path
 from insightface.app import FaceAnalysis
 from torch_kf import KalmanFilter, GaussianState
-from db_utils import (
-    update_check_in,
-    update_check_out,
-    update_user_attendance,
-    get_employee_details,
-)
+from app.services.detection_services import get_user_details_by_unique_id
+# from app.services.attendance_service import mark_attendance
 
 DEVICE = "cuda"
 logging.basicConfig(
@@ -159,7 +155,8 @@ class CameraStream:
         self.emb_db_path = emb_db_path
         self.checkin_cooldown = checkin_cooldown
         self.checkout_cooldown = checkout_cooldown
-        self.show_window = show_window
+        # self.show_window = show_window
+        self.show_window = True
         self.use_gpu = use_gpu
         self.running = False
         self.last_seen = {}
@@ -353,17 +350,18 @@ class CameraStream:
                     if min_dist_value <= self.emb_match_thresh:
                         emp_id = self.names[k]
                         t.label = emp_id
-                        details = get_employee_details(emp_id)
-                        t.name = (
-                            details.get("name", "Unknown") if details else "Unknown"
-                        )
-                        now = datetime.now()
-                        if (
-                            emp_id not in self.last_seen
-                            or (now - self.last_seen[emp_id]).total_seconds() > 60
-                        ):
-                            update_user_attendance(details, emp_id)
-                            self.last_seen[emp_id] = now
+                        details = get_user_details_by_unique_id(emp_id)
+                        logging.info(f"User Details: {details}")
+                        # t.name = (
+                        #     details.get("name", "Unknown") if details else "Unknown"
+                        # )
+                        # now = datetime.now()
+                        # if (
+                        #     emp_id not in self.last_seen
+                        #     or (now - self.last_seen[emp_id]).total_seconds() > 60
+                        # ):
+                        #     update_user_attendance(details, emp_id)
+                        #     self.last_seen[emp_id] = now
             # Visualization
             if self.show_window:
                 vis = frame.cpu().numpy().copy()

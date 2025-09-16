@@ -3,6 +3,7 @@ from werkzeug.utils import secure_filename
 from app.services.user_service import create_user, get_user, list_all_user, delete_user
 import logging
 import os
+import uuid 
 
 # from dotenv import load_dotenv
 # load_dotenv()
@@ -36,8 +37,10 @@ def add_user():
     if image.filename == "" or not allowed_files(image.filename):
         return jsonify({"error": "Invalid or empty image file"}), 400
 
-    filename = secure_filename(image.filename)
-    image_path = os.path.join(UPLOAD_FOLDER, filename)
+    generated_id = uuid.uuid1()
+    original_ext = os.path.splitext(image.filename)[1]  # Get file extension
+    new_filename = f"{generated_id}{original_ext}"
+    image_path = os.path.join(UPLOAD_FOLDER, new_filename)
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
     try:
@@ -46,7 +49,8 @@ def add_user():
         return jsonify({"error": f"Failed to save image: {str(e)}"}), 500
 
     try:
-        user_id, error = create_user(data, image_path)
+        # 👇 Pass new path and UUID to user creation logic
+        user_id, error = create_user(data, image_path, generated_id)
         if error:
             return jsonify({"error": "User Already Exist "}), 403
         return (
@@ -62,6 +66,7 @@ def add_user():
             os.remove(image_path)
         logging.error(f"Unexpected error: {e}")
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
 
 
 # route for getting details for particular user

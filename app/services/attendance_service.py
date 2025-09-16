@@ -1,12 +1,10 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo  
 from bson import ObjectId
-from app.config import db
-from app.models.attendance_model import Attendance
 import logging
+from app.config import db
 
-logging.basicConfig(
-    level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
-)
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def mark_attendance(user_id, action):
@@ -20,12 +18,14 @@ def mark_attendance(user_id, action):
         if not user:
             return None, "User not found"
 
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        now = datetime.now(IST)
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         if action == "checkin":
+            check_in_str = now.strftime("%Y-%m-%d %H:%M:%S")
             attendance_doc = {
                 "user": user_oid,
-                "check_in": datetime.now().isoformat(),
+                "check_in": check_in_str,
                 "check_out": None,
                 "working_hours": 0,
             }
@@ -38,9 +38,12 @@ def mark_attendance(user_id, action):
 
             already_exists = False
             for entry in user.get("total_attendence", []):
-                entry_date = entry.get("date_time")
-                if entry_date:
-                    normalized_entry = entry_date.replace(
+                entry_date_str = entry.get("date_time")
+                if entry_date_str:
+                    entry_dt = datetime.strptime(
+                        entry_date_str, "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=IST)
+                    normalized_entry = entry_dt.replace(
                         hour=0, minute=0, second=0, microsecond=0
                     )
                     if normalized_entry == today:
@@ -53,7 +56,7 @@ def mark_attendance(user_id, action):
                     {
                         "$push": {
                             "total_attendence": {
-                                "date_time": datetime.now().isoformat(),
+                                "date_time": check_in_str,
                             }
                         }
                     },
@@ -71,16 +74,26 @@ def mark_attendance(user_id, action):
             if not attendance:
                 return None, "No active check-in found to check out"
 
-            check_in = attendance["check_in"]
-            check_out = datetime.now().isoformat()
+            check_in_str = attendance["check_in"]
+            check_in = datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=IST
+            )
+            check_out = datetime.now(IST)
+            check_out_str = check_out.strftime("%Y-%m-%d %H:%M:%S")
+
             working_hours = round((check_out - check_in).total_seconds() / 3600, 2)
 
             db.attendance.update_one(
                 {"_id": attendance["_id"]},
-                {"$set": {"check_out": check_out, "working_hours": working_hours}},
+                {
+                    "$set": {
+                        "check_out": check_out_str,
+                        "working_hours": working_hours,
+                    }
+                },
             )
 
-            attendance["check_out"] = check_out
+            attendance["check_out"] = check_out_str
             attendance["working_hours"] = working_hours
             attendance["_id"] = str(attendance["_id"])
             attendance["user"] = str(attendance["user"])

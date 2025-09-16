@@ -19,7 +19,7 @@ detection_bp = Blueprint("detection_bp", __name__)
 def validate_camera_payload(data):
     required = [
         "camera_id",
-        "rtsp_url",
+        "url",
         # "emb_db_path",
         # "checkin_cooldown",
         # "checkout_cooldown",
@@ -47,16 +47,16 @@ def start_camera():
             return jsonify({"message": f"Camera {camera_id} is already running"}), 200
 
         try:
-            emb_db_path = data["emb_db_path"]
-            if not Path(emb_db_path).exists():
-                return (
-                    jsonify({"error": f"Embedding DB file not found at {emb_db_path}"}),
-                    400,
-                )
+            # emb_db_path = data["emb_db_path"]
+            # if not Path(emb_db_path).exists():
+            #     return (
+            #         jsonify({"error": f"Embedding DB file not found at {emb_db_path}"}),
+            #         400,
+            #     )
 
             stream = CameraStream(
                 camera_id=camera_id,
-                rtsp_url=data["rtsp_url"],
+                rtsp_url=data["url"],
                 # emb_db_path=emb_db_path,
                 # checkin_cooldown=int(data["checkin_cooldown"]),
                 # checkout_cooldown=int(data["checkout_cooldown"]),

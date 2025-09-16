@@ -6,7 +6,8 @@ from flask_cors import CORS
 from app.routes.user_routes import user_bp
 from app.routes.camera_routes import camera_bp
 from app.routes.stream_routes import stream_bp
-from app.routes.attendance_routes import attendance_bp
+# from app.routes.attendance_routes import attendance_bp
+from app.routes.detection_routes import detection_bp
 
 def create_app():
     app = Flask(__name__)
@@ -15,7 +16,8 @@ def create_app():
     app.register_blueprint(user_bp)
     app.register_blueprint(camera_bp)
     app.register_blueprint(stream_bp)
-    app.register_blueprint(attendance_bp)
+    app.register_blueprint(detection_bp)
+    # app.register_blueprint(attendance_bp)
 
     @app.errorhandler(404)
     def not_found(error):
