@@ -1,5 +1,6 @@
 import logging
 from flask import Flask
+from flask_cors import CORS
 from threading import Thread
 import asyncio
 from app.routes.user_routes import user_bp
@@ -7,6 +8,7 @@ from app.routes.camera_routes import camera_bp
 from app.services.stream_services import run_websocket_server
 from app.routes.stream_routes import stream_bp
 from app.routes.attendance_routes import attendance_bp
+# from app.routes.detection_routes import detection_bp
 
 # Setup logging
 logging.basicConfig(
@@ -14,10 +16,12 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
+CORS(app)
 app.register_blueprint(user_bp)
 app.register_blueprint(camera_bp)
 app.register_blueprint(stream_bp)
 app.register_blueprint(attendance_bp)
+# app.register_blueprint(detection_bp)
 
 
 @app.errorhandler(404)

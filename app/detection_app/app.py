@@ -14,15 +14,19 @@ from db_utils import (
     update_check_in,
     update_check_out,
     update_user_attendance,
-    get_employee_details
+    get_employee_details,
 )
 
-DEVICE = 'cuda'
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
+DEVICE = "cuda"
+logging.basicConfig(
+    level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
+)
+
 
 class Track:
     """Represents a tracked face."""
-    name = 'Unknown'
+
+    name = "Unknown"
 
     def __init__(self, bbox, emb=None):
         self.name = Track.name
@@ -60,13 +64,12 @@ class Track:
         R = torch.eye(4, device=DEVICE) * 1.5
 
         kf = KalmanFilter(
-            process_matrix=F,
-            measurement_matrix=H,
-            process_noise=Q,
-            measurement_noise=R
+            process_matrix=F, measurement_matrix=H, process_noise=Q, measurement_noise=R
         )
 
-        initial_mean = torch.tensor([cx, cy, w, h, 0, 0, 0], dtype=torch.float32, device=DEVICE)
+        initial_mean = torch.tensor(
+            [cx, cy, w, h, 0, 0, 0], dtype=torch.float32, device=DEVICE
+        )
         initial_cov = torch.eye(7, device=DEVICE) * 10
         initial_cov[4:, 4:] *= 100
 
@@ -84,7 +87,9 @@ class Track:
         cy = (y1 + y2) / 2.0
         w = max(1.0, x2 - x1)
         h = max(1.0, y2 - y1)
-        measurement_mean = torch.tensor([cx, cy, w, h], dtype=torch.float32, device=DEVICE)
+        measurement_mean = torch.tensor(
+            [cx, cy, w, h], dtype=torch.float32, device=DEVICE
+        )
         self.kf_state = self.kf.update(self.kf_state, measurement_mean)
         self.time_since_update = 0
         self.hits += 1
@@ -101,7 +106,8 @@ class Track:
 
 class FrameGrabber:
     """Threaded frame grabber for RTSP streams."""
-    def __init__(self, container, stream, device='cuda'):
+
+    def __init__(self, container, stream, device="cuda"):
         self.container = container
         self.stream = stream
         self.device = device
@@ -115,7 +121,7 @@ class FrameGrabber:
         try:
             for packet in self.container.demux(self.stream):
                 for frame in packet.decode():
-                    img_np = frame.to_ndarray(format='bgr24')
+                    img_np = frame.to_ndarray(format="bgr24")
                     img_tensor = torch.from_numpy(img_np).to(self.device)
                     with self.lock:
                         self.frame = img_tensor
@@ -137,7 +143,17 @@ class FrameGrabber:
 
 class CameraStream:
     """Encapsulates full face recognition + tracking pipeline for one camera."""
-    def __init__(self, camera_id, rtsp_url, emb_db_path, checkin_cooldown=300, checkout_cooldown=300, show_window=False, use_gpu=True):
+
+    def __init__(
+        self,
+        camera_id,
+        rtsp_url,
+        emb_db_path = "encodings\embeddings.pkl",
+        checkin_cooldown=300,
+        checkout_cooldown=300,
+        show_window=False,
+        use_gpu=True,
+    ):
         self.camera_id = camera_id
         self.rtsp_url = rtsp_url
         self.emb_db_path = emb_db_path
@@ -148,7 +164,7 @@ class CameraStream:
         self.running = False
         self.last_seen = {}
         self.tracks = []
-        self.DEVICE = 'cuda' if use_gpu and torch.cuda.is_available() else 'cpu'
+        self.DEVICE = "cuda" if use_gpu and torch.cuda.is_available() else "cpu"
         self.frame_grabber = None
         self.names, self.embs = self.load_embeddings(emb_db_path)
         self.app = self.init_face_app()
@@ -165,12 +181,20 @@ class CameraStream:
         with open(path, "rb") as f:
             db = pickle.load(f)
         names = [d["name"] for d in db]
-        embs = torch.stack([torch.tensor(d["embedding"], dtype=torch.float32) for d in db], dim=0).to(self.DEVICE)
-        logging.info(f"[{self.camera_id}] Loaded {len(names)} embeddings to {self.DEVICE}")
+        embs = torch.stack(
+            [torch.tensor(d["embedding"], dtype=torch.float32) for d in db], dim=0
+        ).to(self.DEVICE)
+        logging.info(
+            f"[{self.camera_id}] Loaded {len(names)} embeddings to {self.DEVICE}"
+        )
         return names, embs
 
     def init_face_app(self):
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.use_gpu else ['CPUExecutionProvider']
+        providers = (
+            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            if self.use_gpu
+            else ["CPUExecutionProvider"]
+        )
         app = FaceAnalysis(name="buffalo_l", providers=providers)
         app.prepare(ctx_id=0 if self.use_gpu else -1, det_size=(1920, 1280))
         return app
@@ -184,25 +208,41 @@ class CameraStream:
         br = torch.min(tracks[:, None, 2:], dets[None, :, 2:])
         wh = (br - tl).clamp(min=0)
         inter = wh[:, :, 0] * wh[:, :, 1]
-        area_track = ((tracks[:, 2] - tracks[:, 0]) * (tracks[:, 3] - tracks[:, 1]))[:, None]
+        area_track = ((tracks[:, 2] - tracks[:, 0]) * (tracks[:, 3] - tracks[:, 1]))[
+            :, None
+        ]
         area_det = ((dets[:, 2] - dets[:, 0]) * (dets[:, 3] - dets[:, 1]))[None, :]
         return inter / (area_track + area_det - inter + 1e-9)
 
     def associate_tracks(self, tracks, dets, iou_thresh=0.35):
-        if not tracks: return [], [], list(range(len(dets)))
-        if not dets: return [], list(range(len(tracks))), []
-        track_boxes = [torch.tensor(t.get_state(), dtype=torch.float32, device=self.DEVICE) for t in tracks]
-        det_boxes = [torch.tensor(d['bbox'], dtype=torch.float32, device=self.DEVICE) for d in dets]
+        if not tracks:
+            return [], [], list(range(len(dets)))
+        if not dets:
+            return [], list(range(len(tracks))), []
+        track_boxes = [
+            torch.tensor(t.get_state(), dtype=torch.float32, device=self.DEVICE)
+            for t in tracks
+        ]
+        det_boxes = [
+            torch.tensor(d["bbox"], dtype=torch.float32, device=self.DEVICE)
+            for d in dets
+        ]
         iou_mat = self.iou_matrix(track_boxes, det_boxes)
-        matches, used_t, used_d = [], torch.zeros(len(tracks), dtype=torch.bool, device=self.DEVICE), torch.zeros(len(dets), dtype=torch.bool, device=self.DEVICE)
+        matches, used_t, used_d = (
+            [],
+            torch.zeros(len(tracks), dtype=torch.bool, device=self.DEVICE),
+            torch.zeros(len(dets), dtype=torch.bool, device=self.DEVICE),
+        )
         N, M = iou_mat.shape
         flat_iou = iou_mat.flatten()
         sorted_vals, sorted_idx = torch.sort(flat_iou, descending=True)
         for val, idx in zip(sorted_vals, sorted_idx):
-            if val < iou_thresh: break
+            if val < iou_thresh:
+                break
             i = idx // M
             j = idx % M
-            if used_t[i] or used_d[j]: continue
+            if used_t[i] or used_d[j]:
+                continue
             matches.append((int(i), int(j)))
             used_t[i] = True
             used_d[j] = True
@@ -218,8 +258,8 @@ class CameraStream:
         tiles = []
         for r in range(gh):
             for c in range(gw):
-                y1, y2 = r*th, (r+1)*th if r < gh-1 else H
-                x1, x2 = c*tw, (c+1)*tw if c < gw-1 else W
+                y1, y2 = r * th, (r + 1) * th if r < gh - 1 else H
+                x1, x2 = c * tw, (c + 1) * tw if c < gw - 1 else W
                 tiles.append(((x1, y1, x2, y2), frame[y1:y2, x1:x2]))
         return tiles
 
@@ -227,7 +267,14 @@ class CameraStream:
         logging.info(f"[{self.camera_id}] Starting camera stream pipeline")
         self.running = True
         try:
-            container = av.open(self.rtsp_url, options={"rtsp_transport": "tcp", "stimeout": "5000000", "rw_timeout": "5000000"})
+            container = av.open(
+                self.rtsp_url,
+                options={
+                    "rtsp_transport": "tcp",
+                    "stimeout": "5000000",
+                    "rw_timeout": "5000000",
+                },
+            )
             stream = container.streams.video[0]
             stream.thread_type = "AUTO"
         except Exception as e:
@@ -257,10 +304,24 @@ class CameraStream:
                     crop_np = crop_gpu.cpu().numpy()
                     faces = self.app.get(crop_np, max_num=self.topk_per_tile)
                     for f in faces:
-                        if f.det_score < self.conf_thresh: continue
+                        if f.det_score < self.conf_thresh:
+                            continue
                         bx1, by1, bx2, by2 = f.bbox.astype(float)
-                        emb_tensor = torch.tensor(f.normed_embedding, dtype=torch.float32, device=self.DEVICE)
-                        new_dets.append({"bbox": [bx1+x1_tile, by1+y1_tile, bx2+x1_tile, by2+y1_tile], "score": float(f.det_score), "emb": emb_tensor})
+                        emb_tensor = torch.tensor(
+                            f.normed_embedding, dtype=torch.float32, device=self.DEVICE
+                        )
+                        new_dets.append(
+                            {
+                                "bbox": [
+                                    bx1 + x1_tile,
+                                    by1 + y1_tile,
+                                    bx2 + x1_tile,
+                                    by2 + y1_tile,
+                                ],
+                                "score": float(f.det_score),
+                                "emb": emb_tensor,
+                            }
+                        )
 
                 matches, u_tracks, u_dets = self.associate_tracks(self.tracks, new_dets)
                 for track_idx, det_idx in matches:
@@ -280,7 +341,8 @@ class CameraStream:
 
                 # Face identification
                 for t in self.tracks:
-                    if not t.emb_smooth: continue
+                    if not t.emb_smooth:
+                        continue
                     emb = torch.mean(torch.stack(list(t.emb_smooth)), dim=0)
                     emb = emb / (emb.norm() + 1e-9)
                     dots = torch.matmul(self.embs, emb)
@@ -292,9 +354,14 @@ class CameraStream:
                         emp_id = self.names[k]
                         t.label = emp_id
                         details = get_employee_details(emp_id)
-                        t.name = details.get("name", "Unknown") if details else "Unknown"
+                        t.name = (
+                            details.get("name", "Unknown") if details else "Unknown"
+                        )
                         now = datetime.now()
-                        if emp_id not in self.last_seen or (now - self.last_seen[emp_id]).total_seconds() > 60:
+                        if (
+                            emp_id not in self.last_seen
+                            or (now - self.last_seen[emp_id]).total_seconds() > 60
+                        ):
                             update_user_attendance(details, emp_id)
                             self.last_seen[emp_id] = now
             # Visualization
@@ -302,13 +369,27 @@ class CameraStream:
                 vis = frame.cpu().numpy().copy()
                 for t in self.tracks:
                     x1, y1, x2, y2 = [int(c.item()) for c in t.get_state()]
-                    x1, y1, x2, y2 = max(0,x1), max(0,y1), min(W-1,x2), min(H-1,y2)
-                    if x2 <= x1 or y2 <= y1: continue
+                    x1, y1, x2, y2 = (
+                        max(0, x1),
+                        max(0, y1),
+                        min(W - 1, x2),
+                        min(H - 1, y2),
+                    )
+                    if x2 <= x1 or y2 <= y1:
+                        continue
                     tag = f"{t.label or 'Unknown'} | {t.name}"
-                    color = (0,255,0) if t.label else (0,0,255)
+                    color = (0, 255, 0) if t.label else (0, 0, 255)
                     cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(vis, tag, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-                cv2.imshow(f"Camera {self.camera_id}", cv2.resize(vis, (1280,720)))
+                    cv2.putText(
+                        vis,
+                        tag,
+                        (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 255, 255),
+                        2,
+                    )
+                cv2.imshow(f"Camera {self.camera_id}", cv2.resize(vis, (1280, 720)))
                 if cv2.waitKey(1) & 0xFF == 27:
                     logging.info(f"[{self.camera_id}] ESC pressed. Stopping camera.")
                     self.stop()
