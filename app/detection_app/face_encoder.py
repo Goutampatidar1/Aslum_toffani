@@ -70,7 +70,7 @@ def encode_face(image_path, label):
             pickle.dump(embeddings, f)
 
         logging.info(f"Face encoding successful for {label}")
-        return True
+        return True  
     except Exception as e:
         logging.error(f"Error encoding face for {label}: {e}")
         return False

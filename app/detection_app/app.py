@@ -162,14 +162,21 @@ class CameraStream:
         self.last_seen = {}
         self.tracks = []
         self.DEVICE = "cuda" if use_gpu and torch.cuda.is_available() else "cpu"
+        if self.use_gpu and torch.cuda.device_count() == 0:
+            logging.warning("GPU requested but not available. Switching to CPU.")
+            self.use_gpu = False
+            self.DEVICE = "cpu"
         self.frame_grabber = None
         self.names, self.embs = self.load_embeddings(emb_db_path)
         self.app = self.init_face_app()
         self.tile_grid = (1, 1)
         self.detect_every_n_frames = 25
-        self.topk_per_tile = 50
+        # self.topk_per_tile = 50
+        self.topk_per_tile = 10
         self.conf_thresh = 0.6
         self.emb_match_thresh = 0.4
+
+
 
     def load_embeddings(self, path):
         if not Path(path).exists():
@@ -270,6 +277,7 @@ class CameraStream:
                     "rtsp_transport": "tcp",
                     "stimeout": "5000000",
                     "rw_timeout": "5000000",
+                    "max_delay": "500000"
                 },
             )
             stream = container.streams.video[0]
@@ -288,6 +296,9 @@ class CameraStream:
                 continue
 
             frame_idx += 1
+            if frame_idx % 100 == 0:
+                logging.info(f"[{self.camera_id}] Frame {frame_idx}, Active Tracks: {len(self.tracks)}")
+
             H, W = frame.shape[:2]
 
             # Predict existing tracks
@@ -299,7 +310,13 @@ class CameraStream:
                 tiles = self.split_into_tiles(frame)
                 for (x1_tile, y1_tile, x2_tile, y2_tile), crop_gpu in tiles:
                     crop_np = crop_gpu.cpu().numpy()
-                    faces = self.app.get(crop_np, max_num=self.topk_per_tile)
+                    # faces = self.app.get(crop_np, max_num=self.topk_per_tile)
+                    try:
+                        faces = self.app.get(crop_np, max_num=self.topk_per_tile)
+                    except Exception as e:
+                        logging.error(f"[{self.camera_id}] Face detection error: {e}")
+                        faces = []
+
                     for f in faces:
                         if f.det_score < self.conf_thresh:
                             continue
@@ -362,6 +379,8 @@ class CameraStream:
                         # ):
                         #     update_user_attendance(details, emp_id)
                         #     self.last_seen[emp_id] = now
+            torch.cuda.empty_cache()
+
             # Visualization
             if self.show_window:
                 vis = frame.cpu().numpy().copy()
