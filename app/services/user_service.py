@@ -24,7 +24,7 @@ def create_user(user_data, image_path , generated_id):
         contact_number=user_data["contact_number"],
         image=image_path,
         major=user_data["major"],
-        unique_user_id= generated_id
+        unique_user_id= str(generated_id)
     )
 
     existing_user = db.users.find_one({"email_id": user.email_id})
@@ -35,7 +35,7 @@ def create_user(user_data, image_path , generated_id):
     user_id = str(result.inserted_id)
 
     # Encoder implemented
-    success = encode_face(image_path, user.name)
+    success = encode_face(image_path, user.unique_user_id)
     if not success:
         db.users.delete_one({"_id": result.inserted_id})
         if os.path.exists(image_path):
