@@ -11,7 +11,7 @@ from pathlib import Path
 from insightface.app import FaceAnalysis
 from torch_kf import KalmanFilter, GaussianState
 from app.services.detection_services import get_user_details_by_unique_id
-# from app.services.attendance_service import mark_attendance
+from app.services.attendance_service import mark_attendance
 
 DEVICE = "cuda"
 logging.basicConfig(
@@ -144,7 +144,7 @@ class CameraStream:
         self,
         camera_id,
         rtsp_url,
-        emb_db_path = "encodings\embeddings.pkl",
+        emb_db_path="encodings\embeddings.pkl",
         checkin_cooldown=300,
         checkout_cooldown=300,
         show_window=False,
@@ -175,8 +175,7 @@ class CameraStream:
         self.topk_per_tile = 10
         self.conf_thresh = 0.6
         self.emb_match_thresh = 0.4
-
-
+        self.cooldown = 60
 
     def load_embeddings(self, path):
         if not Path(path).exists():
@@ -277,7 +276,7 @@ class CameraStream:
                     "rtsp_transport": "tcp",
                     "stimeout": "5000000",
                     "rw_timeout": "5000000",
-                    "max_delay": "500000"
+                    "max_delay": "500000",
                 },
             )
             stream = container.streams.video[0]
@@ -296,8 +295,8 @@ class CameraStream:
                 continue
 
             frame_idx += 1
-            if frame_idx % 100 == 0:
-                logging.info(f"[{self.camera_id}] Frame {frame_idx}, Active Tracks: {len(self.tracks)}")
+            # if frame_idx % 100 == 0:
+            #     logging.info(f"[{self.camera_id}] Frame {frame_idx}, Active Tracks: {len(self.tracks)}")
 
             H, W = frame.shape[:2]
 
@@ -364,23 +363,64 @@ class CameraStream:
                     min_dist, min_idx = torch.min(dists, dim=0)
                     min_dist_value = min_dist.item()
                     k = min_idx.item()
+
+                    # if min_dist_value <= self.emb_match_thresh:
+                    #     emp_id = self.names[k]
+                    #     t.label = emp_id
+                    #     details = get_user_details_by_unique_id(emp_id)
+                    #     # logging.info(f"User Details: {details}")
+                    #     if not details:
+                    #         logging.warning(
+                    #             f"Employee details not found for ID: {emp_id}"
+                    #         )
+                    #         continue
+
+                    #     t.name = details.get("name", "Unknown")
+                    #     now = datetime.now()
+                    
                     if min_dist_value <= self.emb_match_thresh:
                         emp_id = self.names[k]
                         t.label = emp_id
                         details = get_user_details_by_unique_id(emp_id)
-                        logging.info(f"User Details: {details}")
-                        # t.name = (
-                        #     details.get("name", "Unknown") if details else "Unknown"
-                        # )
-                        # now = datetime.now()
-                        # if (
-                        #     emp_id not in self.last_seen
-                        #     or (now - self.last_seen[emp_id]).total_seconds() > 60
-                        # ):
-                        #     update_user_attendance(details, emp_id)
-                        #     self.last_seen[emp_id] = now
-            torch.cuda.empty_cache()
 
+                        if not details:
+                            logging.warning(f"Employee details not found for ID: {emp_id}")
+                            continue
+                        
+                        t.name = details.get("name", "Unknown")
+                        now = datetime.now()
+
+                        # Attendance logic
+                        last_action_time = self.last_seen.get(emp_id)
+                        if last_action_time and (now - last_action_time).seconds < self.cooldown:
+                            continue  # skip due to cooldown
+                        
+                        # Update cooldown tracker
+                        self.last_seen[emp_id] = now
+
+                        # Determine check-in or check-out
+
+                        attendance_result, error = mark_attendance(emp_id, action="checkin")
+                        if error == "No active check-in found to check out":
+                            # Try check-in
+                            attendance_result, error = mark_attendance(emp_id, action="checkin")
+                            if not error:
+                                logging.info(f"{t.name} checked in at {now}")
+                        elif error == "User already checked in today":
+                            # Already checked in, attempt check-out
+                            attendance_result, error = mark_attendance(emp_id, action="checkout")
+                            if not error:
+                                logging.info(f"{t.name} checked out at {now}")
+                        elif not error:
+                            logging.info(f"{t.name} attendance recorded: {attendance_result}")
+                        else:
+                            logging.warning(f"Attendance error for {t.name}: {error}")
+                    
+
+
+
+
+            torch.cuda.empty_cache()
             # Visualization
             if self.show_window:
                 vis = frame.cpu().numpy().copy()
@@ -394,7 +434,7 @@ class CameraStream:
                     )
                     if x2 <= x1 or y2 <= y1:
                         continue
-                    tag = f"{t.label or 'Unknown'} | {t.name}"
+                    tag = f"{t.name}"
                     color = (0, 255, 0) if t.label else (0, 0, 255)
                     cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(

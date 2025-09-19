@@ -52,6 +52,8 @@ def add_user():
         # 👇 Pass new path and UUID to user creation logic
         user_id, error = create_user(data, image_path, generated_id)
         if error:
+            if os.path.exists(image_path):
+                os.remove(image_path)
             return jsonify({"error": "User Already Exist "}), 403
         return (
             jsonify({"message": "User created and image processed", "id": user_id}),

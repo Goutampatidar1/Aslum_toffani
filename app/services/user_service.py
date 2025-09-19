@@ -5,15 +5,30 @@ from app.detection_app.face_encoder import encode_face
 from app.models.user_model import User
 from app.detection_app.face_encoder import encode_face
 import os
+from datetime import datetime
 
 
+def serialize_user(user):
+    def serialize(value):
+        if isinstance(value, ObjectId):
+            return str(value)
+        elif isinstance(value, datetime):
+            return value.isoformat()
+        elif isinstance(value, list):
+            return [serialize(v) for v in value]
+        elif isinstance(value, dict):
+            return {k: serialize(v) for k, v in value.items()}
+        else:
+            return value
+
+    return {key: serialize(val) for key, val in user.items()}
 
 # function for listing all the user
 def list_all_user():
     users = list(db.users.find({}))
-    for user in users:
-        user["_id"] = str(user["_id"])
-    return users , None
+    serialized_users = [serialize_user(user) for user in users]
+    return serialized_users, None
+
 
 
 # function for creating the user

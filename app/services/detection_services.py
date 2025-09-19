@@ -11,7 +11,7 @@ def get_user_details_by_unique_id(unique_user_id):
 
     print("USER DETAILS" , user_details)
     if user_details:
-        logging.info("User Details found returning to detection app", user_details)
+        # logging.info("User Details found returning to detection app", user_details)
         return user_details
 
     return None
