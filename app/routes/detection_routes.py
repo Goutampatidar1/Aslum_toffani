@@ -2,7 +2,8 @@ from flask import Blueprint, request, jsonify
 import threading
 import logging
 from pathlib import Path
-from app.detection_app.app import CameraStream
+# from app.detection_app.app import CameraStream
+from app.detection_app.new_app import CameraStream
 
 logging.basicConfig(
     level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"

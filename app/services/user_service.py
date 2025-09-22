@@ -3,9 +3,11 @@ from bson.objectid import ObjectId
 from app.utils.helper import str_object_id
 from app.detection_app.face_encoder import encode_face
 from app.models.user_model import User
-from app.detection_app.face_encoder import encode_face
 import os
 from datetime import datetime
+import shutil
+from app.detection_app.new_encoder import encode_all_faces
+from pathlib import Path
 
 
 def serialize_user(user):
@@ -23,6 +25,7 @@ def serialize_user(user):
 
     return {key: serialize(val) for key, val in user.items()}
 
+
 # function for listing all the user
 def list_all_user():
     users = list(db.users.find({}))
@@ -30,16 +33,44 @@ def list_all_user():
     return serialized_users, None
 
 
+# # function for creating the user
+# def create_user(user_data, image_path , generated_id):
+#     user = User(
+#         name=user_data["name"],
+#         email_id=user_data["email_id"],
+#         contact_number=user_data["contact_number"],
+#         image=image_path,
+#         major=user_data["major"],
+#         unique_user_id= str(generated_id)
+#     )
 
-# function for creating the user
-def create_user(user_data, image_path , generated_id):
+#     existing_user = db.users.find_one({"email_id": user.email_id})
+#     if existing_user:
+#         return 0, "User Already exist"
+
+#     result = db.users.insert_one(user.to_dict())
+#     user_id = str(result.inserted_id)
+
+#     # Encoder implemented
+#     success = encode_face(image_path, user.unique_user_id)
+#     if not success:
+#         db.users.delete_one({"_id": result.inserted_id})
+#         if os.path.exists(image_path):
+#             os.remove(image_path)
+#         raise ValueError("No face detected in the uploaded image")
+
+#     return user_id, None
+
+
+def create_user(user_data, image_paths, generated_id):
     user = User(
         name=user_data["name"],
         email_id=user_data["email_id"],
         contact_number=user_data["contact_number"],
-        image=image_path,
+        images=image_paths,  # <- now passing full list
         major=user_data["major"],
-        unique_user_id= str(generated_id)
+        unique_user_id=generated_id,
+        company_id=user_data["company_id"]
     )
 
     existing_user = db.users.find_one({"email_id": user.email_id})
@@ -49,13 +80,14 @@ def create_user(user_data, image_path , generated_id):
     result = db.users.insert_one(user.to_dict())
     user_id = str(result.inserted_id)
 
-    # Encoder implemented
-    success = encode_face(image_path, user.unique_user_id)
+    # success = encode_all_faces(Path("images"), Path("encodings/embeddings.pkl"))
+    user_folder = Path(image_paths[0]).parent
+    success = encode_all_faces(user_folder, Path("encodings/embeddings.pkl"))
+
     if not success:
         db.users.delete_one({"_id": result.inserted_id})
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        raise ValueError("No face detected in the uploaded image")
+        shutil.rmtree(os.path.dirname(image_paths[0]), ignore_errors=True)
+        raise ValueError("No valid faces detected in uploaded images")
 
     return user_id, None
 

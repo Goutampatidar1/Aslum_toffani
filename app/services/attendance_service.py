@@ -3,9 +3,19 @@ from bson import ObjectId
 import logging
 from app.config import db
 from app.models.attendance_model import Attendance
+import base64
+import cv2
+import torch
 
 
-def mark_attendance(unique_user_id, action):
+def frame_to_base64(self , frame):
+    """Convert OpenCV or Torch tensor frame to base64 string."""
+    if isinstance(frame, torch.Tensor):
+        frame = frame.detach().cpu().numpy()
+    _, buffer = cv2.imencode(".jpg", frame)
+    return base64.b64encode(buffer).decode("utf-8")
+
+def mark_attendance(unique_user_id, action,  frame=None):
     try:
 
         try:
@@ -20,9 +30,10 @@ def mark_attendance(unique_user_id, action):
 
         now = datetime.now()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        frame_b64 = frame_to_base64(frame) if frame is not None else None
 
         if action == "checkin":
-            # 🛑 Prevent duplicate check-ins
+            # Prevent duplicate check-ins
             existing_attendance = db.attendance.find_one(
                 {"user_id": user["_id"], "check_out": None}
             )
@@ -35,6 +46,7 @@ def mark_attendance(unique_user_id, action):
                 check_in=check_in_str,
                 check_out=None,
                 total_hours=0,
+                check_in_image=frame_b64,
             )
             result = db.attendance.insert_one(attendance_doc.to_dict())
             attendance_id = result.inserted_id
