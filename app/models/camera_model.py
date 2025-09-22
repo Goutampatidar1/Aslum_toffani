@@ -6,9 +6,9 @@ class Camera:
         url,
         company_name,
         company_email,
-        comapny_id,
+        company_id,
     ):
-        self.company_id = comapny_id
+        self.company_id = company_id
         self.camera_name = camera_name
         self.camera_place = camera_place
         self.company_name = company_name

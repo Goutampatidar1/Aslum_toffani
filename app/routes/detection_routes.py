@@ -21,6 +21,7 @@ def validate_camera_payload(data):
     required = [
         "camera_id",
         "url",
+        "company_id"
         # "emb_db_path",
         # "checkin_cooldown",
         # "checkout_cooldown",
@@ -58,6 +59,7 @@ def start_camera():
             stream = CameraStream(
                 camera_id=camera_id,
                 rtsp_url=data["url"],
+                company_id=data["company_id"]
                 # emb_db_path=emb_db_path,
                 # checkin_cooldown=int(data["checkin_cooldown"]),
                 # checkout_cooldown=int(data["checkout_cooldown"]),

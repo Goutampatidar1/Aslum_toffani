@@ -8,6 +8,9 @@ def create_camera(data):
         camera_name=data["camera_name"],
         camera_place=data["camera_place"],
         url=data["url"],
+        company_id=data["company_id"],
+        company_email=data["company_email"],
+        company_name=data["company_name"]
     )
 
     result = db.cameras.insert_one(camera.to_dict())

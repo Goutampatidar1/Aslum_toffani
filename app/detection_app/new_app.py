@@ -12,6 +12,13 @@ from insightface.app import FaceAnalysis
 from torch_kf import KalmanFilter, GaussianState
 from app.services.detection_services import get_user_details_by_unique_id
 from app.services.attendance_service import mark_attendance
+import uuid
+import base64
+import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 DEVICE = "cuda"
@@ -37,6 +44,15 @@ class Track:
         self.emb_smooth = deque(maxlen=10)
         if emb is not None:
             self.emb_smooth.append(emb.to(DEVICE))
+
+        # 🆕 Unknown face tracking fields
+        self.temp_id = str(uuid.uuid4())  # unique ID for this track
+        self.is_unknown = False  # flag if currently unknown
+        self.unknown_frames = 0  # consecutive frames marked unknown
+        self.last_notified_time = None  # last time we sent API notification
+        self.unknown_notified = False  # whether notification was already sent
+        self.first_seen = datetime.now()  # when this track first appeared
+        self.frames_seen = 0  # how many frames total seen
 
     def _init_kf(self, bbox):
         x1, y1, x2, y2 = bbox
@@ -145,6 +161,7 @@ class CameraStream:
         self,
         camera_id,
         rtsp_url,
+        company_id,
         emb_db_path="encodings\embeddings.pkl",
         checkin_cooldown=300,
         checkout_cooldown=300,
@@ -178,6 +195,16 @@ class CameraStream:
         self.emb_match_thresh = 0.4
         self.cooldown = 60
 
+        # Unknown-person handling
+        self.unknown_confirm_frames = 15
+        self.unknown_notify_cooldown = 180  # seconds between notifications
+        self.unknown_notify_url = os.getenv("THREAT_API", None)
+        # self.unknown_notify_headers = {
+        #     "Content-Type": "application/json"
+        # }  # add auth if needed
+        self.max_unknown_store = 200  # optional local store cap
+        self.company_id = company_id
+
     def load_embeddings(self, path):
         if not Path(path).exists():
             logging.error(f"Embedding DB not found: {path}")
@@ -200,7 +227,7 @@ class CameraStream:
             else ["CPUExecutionProvider"]
         )
         app = FaceAnalysis(name="buffalo_l", providers=providers)
-        app.prepare(ctx_id=0 if self.use_gpu else -1, det_size=(1920, 1280))
+        app.prepare(ctx_id=0 if self.use_gpu else -1, det_size=(1920, 1920))
         return app
 
     def iou_matrix(self, tracks_bbox_list, dets_bbox_list):
@@ -266,6 +293,59 @@ class CameraStream:
                 x1, x2 = c * tw, (c + 1) * tw if c < gw - 1 else W
                 tiles.append(((x1, y1, x2, y2), frame[y1:y2, x1:x2]))
         return tiles
+
+    def notify_unknown(self, track, frame):
+
+        x1, y1, x2, y2 = [int(round(v)) for v in track.get_state()]
+        H, W = frame.shape[:2]
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(W, x2), min(H, y2)
+
+        # Copy the frame so original isn’t modified
+        frame_copy = frame.copy()
+
+        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+        # Optionally add label
+        cv2.putText(
+            frame_copy,
+            "Unknown",
+            (x1, max(0, y1 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 255),
+            2,
+        )
+
+        # Encode full frame as JPEG
+        success, jpeg = cv2.imencode(".jpg", frame_copy)
+        if not success:
+            raise RuntimeError("Failed to encode full frame")
+
+        jpg_b64 = base64.b64encode(jpeg.tobytes()).decode("utf-8")
+
+        payload = {
+            "camera_id": self.camera_id,
+            "company_id": self.company_id,
+            "user_id": getattr(track, "temp_id", str(uuid.uuid4())),
+            "file": jpg_b64,
+            "type": "unknown",
+        }
+
+        # Send to API
+        resp = requests.post(
+            self.unknown_notify_url,
+            json=payload,
+            headers=self.unknown_notify_headers,
+            timeout=5,
+        )
+        if resp.status_code >= 400:
+            logging.warning(
+                f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}"
+            )
+        else:
+            logging.info(
+                f"[{self.camera_id}] Unknown full-frame notification sent for {payload['temp_id']}"
+            )
 
     def run(self):
         logging.info(f"[{self.camera_id}] Starting camera stream pipeline")
@@ -350,13 +430,23 @@ class CameraStream:
                     new_track = Track(det["bbox"], det["emb"])
                     new_track.conf = det["score"]
                     self.tracks.append(new_track)
+                    # Unknown bookkeeping
+                    new_track.temp_id = str(uuid.uuid4())
+                    new_track.is_unknown = True  # start as unknown until identified
+                    new_track.unknown_frames = 1
+                    new_track.frames_seen = 1
+                    new_track.last_notified_time = None
+                    new_track.unknown_notified = False
+                    self.tracks.append(new_track)
 
                 self.tracks = [t for t in self.tracks if t.time_since_update <= 12]
 
-                # Face identification
+                # Face identification & unknown tracking
                 for t in self.tracks:
                     if not t.emb_smooth:
                         continue
+
+                    # Compute average embedding for this track
                     emb = torch.mean(torch.stack(list(t.emb_smooth)), dim=0)
                     emb = emb / (emb.norm() + 1e-9)
                     dots = torch.matmul(self.embs, emb)
@@ -365,25 +455,16 @@ class CameraStream:
                     min_dist_value = min_dist.item()
                     k = min_idx.item()
 
-                    # if min_dist_value <= self.emb_match_thresh:
-                    #     emp_id = self.names[k]
-                    #     t.label = emp_id
-                    #     details = get_user_details_by_unique_id(emp_id)
-                    #     # logging.info(f"User Details: {details}")
-                    #     if not details:
-                    #         logging.warning(
-                    #             f"Employee details not found for ID: {emp_id}"
-                    #         )
-                    #         continue
-
-                    #     t.name = details.get("name", "Unknown")
-                    #     now = datetime.now()
+                    now = datetime.now()
 
                     if min_dist_value <= self.emb_match_thresh:
                         emp_id = self.names[k]
                         t.label = emp_id
-                        details = get_user_details_by_unique_id(emp_id)
+                        t.is_unknown = False
+                        t.unknown_frames = 0
+                        t.frames_seen += 1
 
+                        details = get_user_details_by_unique_id(emp_id)
                         if not details:
                             logging.warning(
                                 f"Employee details not found for ID: {emp_id}"
@@ -391,7 +472,6 @@ class CameraStream:
                             continue
 
                         t.name = details.get("name", "Unknown")
-                        now = datetime.now()
 
                         # Attendance logic
                         last_action_time = self.last_seen.get(emp_id)
@@ -404,20 +484,16 @@ class CameraStream:
                         # Update cooldown tracker
                         self.last_seen[emp_id] = now
 
-                        # Determine check-in or check-out
-
                         attendance_result, error = mark_attendance(
                             emp_id, action="checkin", frame=frame
                         )
                         if error == "No active check-in found to check out":
-                            # Try check-in
                             attendance_result, error = mark_attendance(
                                 emp_id, action="checkin", frame=frame
                             )
                             if not error:
                                 logging.info(f"{t.name} checked in at {now}")
                         elif error == "User already checked in today":
-                            # Already checked in, attempt check-out
                             attendance_result, error = mark_attendance(
                                 emp_id, action="checkout", frame=frame
                             )
@@ -429,6 +505,35 @@ class CameraStream:
                             )
                         else:
                             logging.warning(f"Attendance error for {t.name}: {error}")
+
+                    else:
+
+                        t.is_unknown = True
+                        t.frames_seen += 1
+                        t.unknown_frames = getattr(t, "unknown_frames", 0) + 1
+
+                        # Determine if we can send notification
+                        can_notify = t.unknown_frames >= getattr(
+                            self, "unknown_confirm_frames", 5
+                        ) and (
+                            t.last_notified_time is None
+                            or (now - t.last_notified_time).total_seconds()
+                            > getattr(self, "unknown_notify_cooldown", 60)
+                        )
+
+                        if can_notify:
+                            try:
+                                # notify_unknown should handle cropping, base64, bbox, camera id, timestamp
+                                self.notify_unknown(t, frame)
+                                t.last_notified_time = now
+                                t.unknown_notified = True
+                                logging.info(
+                                    f"[{self.camera_id}] Unknown person notified: {t.temp_id}"
+                                )
+                            except Exception as e:
+                                logging.exception(
+                                    f"[{self.camera_id}] Failed to notify unknown: {e}"
+                                )
 
             torch.cuda.empty_cache()
             # Visualization

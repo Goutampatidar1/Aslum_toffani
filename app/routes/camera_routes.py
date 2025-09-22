@@ -9,7 +9,17 @@ camera_bp = Blueprint("camera_bp", __name__)
 def add_camera():
     data = request.form.to_dict()
 
-    if not all(k in data for k in ("url", "camera_name", "camera_place")):
+    if not all(
+        k in data
+        for k in (
+            "url",
+            "camera_name",
+            "camera_place",
+            "company_id",
+            "company_name",
+            "company_email",
+        )
+    ):
         return jsonify({"error": "Missing fields"}), 400
 
     try:
