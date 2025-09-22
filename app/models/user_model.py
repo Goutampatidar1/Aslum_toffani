@@ -36,5 +36,5 @@ class User:
             "total_attendence": self.total_attendance,
             "total_work": self.total_work,
             "unique_user_id": self.unique_user_id,
-            "company_id": self.company_id,
+            "company_id" : self.company_id
         }

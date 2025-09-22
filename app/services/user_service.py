@@ -33,43 +33,15 @@ def list_all_user():
     return serialized_users, None
 
 
-# # function for creating the user
-# def create_user(user_data, image_path , generated_id):
-#     user = User(
-#         name=user_data["name"],
-#         email_id=user_data["email_id"],
-#         contact_number=user_data["contact_number"],
-#         image=image_path,
-#         major=user_data["major"],
-#         unique_user_id= str(generated_id)
-#     )
-
-#     existing_user = db.users.find_one({"email_id": user.email_id})
-#     if existing_user:
-#         return 0, "User Already exist"
-
-#     result = db.users.insert_one(user.to_dict())
-#     user_id = str(result.inserted_id)
-
-#     # Encoder implemented
-#     success = encode_face(image_path, user.unique_user_id)
-#     if not success:
-#         db.users.delete_one({"_id": result.inserted_id})
-#         if os.path.exists(image_path):
-#             os.remove(image_path)
-#         raise ValueError("No face detected in the uploaded image")
-
-#     return user_id, None
-
-
-def create_user(user_data, image_paths, generated_id):
+# function for creating the user
+def create_user(user_data, image_path , generated_id):
     user = User(
         name=user_data["name"],
         email_id=user_data["email_id"],
         contact_number=user_data["contact_number"],
-        images=image_paths,  # <- now passing full list
+        images=image_path,
         major=user_data["major"],
-        unique_user_id=generated_id,
+        unique_user_id= str(generated_id),
         company_id=user_data["company_id"]
     )
 
@@ -80,16 +52,45 @@ def create_user(user_data, image_paths, generated_id):
     result = db.users.insert_one(user.to_dict())
     user_id = str(result.inserted_id)
 
-    # success = encode_all_faces(Path("images"), Path("encodings/embeddings.pkl"))
-    user_folder = Path(image_paths[0]).parent
-    success = encode_all_faces(user_folder, Path("encodings/embeddings.pkl"))
-
+    # Encoder implemented
+    success = encode_face(image_path, user.unique_user_id)
     if not success:
         db.users.delete_one({"_id": result.inserted_id})
-        shutil.rmtree(os.path.dirname(image_paths[0]), ignore_errors=True)
-        raise ValueError("No valid faces detected in uploaded images")
+        if os.path.exists(image_path):
+            os.remove(image_path)
+        raise ValueError("No face detected in the uploaded image")
 
     return user_id, None
+
+
+# def create_user(user_data, image_paths, generated_id):
+#     user = User(
+#         name=user_data["name"],
+#         email_id=user_data["email_id"],
+#         contact_number=user_data["contact_number"],
+#         images=image_paths,  # <- now passing full list
+#         major=user_data["major"],
+#         unique_user_id=generated_id,
+#         company_id=user_data["company_id"]
+#     )
+
+#     existing_user = db.users.find_one({"email_id": user.email_id})
+#     if existing_user:
+#         return 0, "User Already exist"
+
+#     result = db.users.insert_one(user.to_dict())
+#     user_id = str(result.inserted_id)
+
+#     IMAGES_ROOT = Path("../images")
+#     success = encode_all_faces(IMAGES_ROOT, Path("encodings/embeddings.pkl"))
+
+
+#     if not success:
+#         db.users.delete_one({"_id": result.inserted_id})
+#         shutil.rmtree(os.path.dirname(image_paths[0]), ignore_errors=True)
+#         raise ValueError("No valid faces detected in uploaded images")
+
+#     return user_id, None
 
 
 # function for getting particular user details

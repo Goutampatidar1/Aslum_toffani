@@ -5,8 +5,12 @@ from pathlib import Path
 # from app.detection_app.app import CameraStream
 from app.detection_app.new_app import CameraStream
 
+# logging.basicConfig(
+#     level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
+# )
 logging.basicConfig(
-    level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
 )
 
 
@@ -55,7 +59,7 @@ def start_camera():
             #         jsonify({"error": f"Embedding DB file not found at {emb_db_path}"}),
             #         400,
             #     )
-
+            logging.info("------------------hello-------------------")
             stream = CameraStream(
                 camera_id=camera_id,
                 rtsp_url=data["url"],
@@ -66,11 +70,11 @@ def start_camera():
                 # show_window=bool(data["show_window"]),
                 # use_gpu=bool(data.get("use_gpu", True)),
             )
-
+            logging.info("------------------hello-------------------")
             thread = threading.Thread(target=stream.run, daemon=True)
             active_streams[camera_id] = {"stream": stream, "thread": thread}
             thread.start()
-
+            
             logging.info(f"[API] Started camera {camera_id}")
             return jsonify({"message": f"Camera {camera_id} started"}), 200
 

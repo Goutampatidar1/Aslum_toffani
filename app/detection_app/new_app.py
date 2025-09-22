@@ -22,8 +22,12 @@ load_dotenv()
 
 
 DEVICE = "cuda"
+# logging.basicConfig(
+#     level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
+# )
 logging.basicConfig(
-    level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
 )
 
 
@@ -162,7 +166,7 @@ class CameraStream:
         camera_id,
         rtsp_url,
         company_id,
-        emb_db_path="encodings\embeddings.pkl",
+        emb_db_path="encodings/embeddings.pkl",
         checkin_cooldown=300,
         checkout_cooldown=300,
         show_window=False,
@@ -188,16 +192,16 @@ class CameraStream:
         self.names, self.embs = self.load_embeddings(emb_db_path)
         self.app = self.init_face_app()
         self.tile_grid = (1, 1)
-        self.detect_every_n_frames = 25
+        self.detect_every_n_frames = 8
         # self.topk_per_tile = 50
         self.topk_per_tile = 10
-        self.conf_thresh = 0.6
-        self.emb_match_thresh = 0.4
+        self.conf_thresh = 0.40
+        self.emb_match_thresh = 0.75
         self.cooldown = 60
 
         # Unknown-person handling
         self.unknown_confirm_frames = 15
-        self.unknown_notify_cooldown = 180  # seconds between notifications
+        self.unknown_notify_cooldown = 180  
         self.unknown_notify_url = os.getenv("THREAT_API", None)
         # self.unknown_notify_headers = {
         #     "Content-Type": "application/json"
@@ -295,57 +299,57 @@ class CameraStream:
         return tiles
 
     def notify_unknown(self, track, frame):
+        pass
+        # x1, y1, x2, y2 = [int(round(v)) for v in track.get_state()]
+        # H, W = frame.shape[:2]
+        # x1, y1, x2, y2 = max(0, x1), max(0, y1), min(W, x2), min(H, y2)
 
-        x1, y1, x2, y2 = [int(round(v)) for v in track.get_state()]
-        H, W = frame.shape[:2]
-        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(W, x2), min(H, y2)
+        # # Copy the frame so original isn’t modified
+        # frame_copy = frame.copy()
 
-        # Copy the frame so original isn’t modified
-        frame_copy = frame.copy()
+        # cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        # # Optionally add label
+        # cv2.putText(
+        #     frame_copy,
+        #     "Unknown",
+        #     (x1, max(0, y1 - 10)),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.8,
+        #     (0, 0, 255),
+        #     2,
+        # )
 
-        # Optionally add label
-        cv2.putText(
-            frame_copy,
-            "Unknown",
-            (x1, max(0, y1 - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 0, 255),
-            2,
-        )
+        # # Encode full frame as JPEG
+        # success, jpeg = cv2.imencode(".jpg", frame_copy)
+        # if not success:
+        #     raise RuntimeError("Failed to encode full frame")
 
-        # Encode full frame as JPEG
-        success, jpeg = cv2.imencode(".jpg", frame_copy)
-        if not success:
-            raise RuntimeError("Failed to encode full frame")
+        # jpg_b64 = base64.b64encode(jpeg.tobytes()).decode("utf-8")
 
-        jpg_b64 = base64.b64encode(jpeg.tobytes()).decode("utf-8")
+        # payload = {
+        #     "camera_id": self.camera_id,
+        #     "company_id": self.company_id,
+        #     "user_id": getattr(track, "temp_id", str(uuid.uuid4())),
+        #     "file": jpg_b64,
+        #     "type": "unknown",
+        # }
 
-        payload = {
-            "camera_id": self.camera_id,
-            "company_id": self.company_id,
-            "user_id": getattr(track, "temp_id", str(uuid.uuid4())),
-            "file": jpg_b64,
-            "type": "unknown",
-        }
-
-        # Send to API
-        resp = requests.post(
-            self.unknown_notify_url,
-            json=payload,
-            headers=self.unknown_notify_headers,
-            timeout=5,
-        )
-        if resp.status_code >= 400:
-            logging.warning(
-                f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}"
-            )
-        else:
-            logging.info(
-                f"[{self.camera_id}] Unknown full-frame notification sent for {payload['temp_id']}"
-            )
+        # # Send to API
+        # resp = requests.post(
+        #     self.unknown_notify_url,
+        #     json=payload,
+        #     headers=self.unknown_notify_headers,
+        #     timeout=5,
+        # )
+        # if resp.status_code >= 400:
+        #     logging.warning(
+        #         f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}"
+        #     )
+        # else:
+        #     logging.info(
+        #         f"[{self.camera_id}] Unknown full-frame notification sent for {payload['temp_id']}"
+        #     )
 
     def run(self):
         logging.info(f"[{self.camera_id}] Starting camera stream pipeline")
@@ -443,12 +447,22 @@ class CameraStream:
 
                 # Face identification & unknown tracking
                 for t in self.tracks:
-                    if not t.emb_smooth:
+                    # Filter out any None or empty tensors
+                    valid_embs = [
+                        e for e in t.emb_smooth if e is not None and e.numel() > 0
+                    ]
+                    if len(valid_embs) == 0:
                         continue
 
                     # Compute average embedding for this track
-                    emb = torch.mean(torch.stack(list(t.emb_smooth)), dim=0)
-                    emb = emb / (emb.norm() + 1e-9)
+                    try:
+                        emb = torch.mean(torch.stack(valid_embs), dim=0) 
+                        emb = emb / (emb.norm() + 1e-9)
+                    except RuntimeError as e:
+                        logging.warning(
+                            f"Skipping empty embedding for track {t.temp_id}: {e}"
+                        )
+                        continue
                     dots = torch.matmul(self.embs, emb)
                     dists = 1.0 - dots
                     min_dist, min_idx = torch.min(dists, dim=0)
