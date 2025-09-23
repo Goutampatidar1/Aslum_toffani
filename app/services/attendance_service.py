@@ -69,6 +69,7 @@ def frame_to_base64(frame, target_size=(640, 480)):
 def mark_attendance(
     unique_user_id,
     camera_id,
+    action,
     company_id=None,
     frame=None,
 ):

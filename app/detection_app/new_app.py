@@ -18,6 +18,9 @@ import os
 from dotenv import load_dotenv
 import numpy as np
 from app.services.attendance_service import frame_to_base64
+import base64
+from queue import Queue, Empty
+import threading
 
 load_dotenv()
 
@@ -27,6 +30,39 @@ logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
 )
+
+
+class NotificationWorker:
+    def __init__(self, notify_fn, max_queue_size=100):
+        self.queue = Queue(maxsize=max_queue_size)
+        self.notify_fn = notify_fn
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.running = True
+        self.thread.start()
+
+    def _worker(self):
+        while self.running:
+            try:
+                tracks, frame = self.queue.get(timeout=1)  # list of tracks
+            except Empty:
+                continue
+            try:
+                self.notify_fn(tracks, frame)  # pass list instead of one
+            except Exception as e:
+                logging.error(f"Notification worker error: {e}")
+            finally:
+                self.queue.task_done()
+
+    def submit(self, tracks, frame):
+        """Submit multiple tracks in one frame."""
+        try:
+            self.queue.put_nowait((tracks, frame))
+        except:
+            logging.warning("Notification queue full, dropping task")
+
+    def stop(self):
+        self.running = False
+        self.thread.join(timeout=5)
 
 
 class Track:
@@ -195,13 +231,16 @@ class CameraStream:
         self.conf_thresh = 0.40
         self.emb_match_thresh = 0.75
         self.cooldown = 60
-
+        self.notifier = NotificationWorker(self.notify_unknown)
         # Unknown-person handling
         self.unknown_confirm_frames = 16
-        self.unknown_notify_cooldown = 30
+        self.unknown_notify_interval = 30
         self.unknown_notify_url = os.getenv("THREAT_API", None)
-        self.max_unknown_store = 200  
+        self.max_unknown_store = 200
         self.company_id = company_id
+        self.pending_unknowns = {}
+        self.max_unknown_store = 200
+        self.last_unknown_notify_time = datetime.min
 
     def load_embeddings(self, path):
         if not Path(path).exists():
@@ -292,61 +331,72 @@ class CameraStream:
                 tiles.append(((x1, y1, x2, y2), frame[y1:y2, x1:x2]))
         return tiles
 
-    def notify_unknown(self, track, frame):
+    def notify_unknown(self, tracks, frame, target_size=(640, 480)):
         logging.debug("FUNCTION notify_unknown called")
 
+        # Convert torch tensor → numpy
         if isinstance(frame, torch.Tensor):
-            frame = frame.permute(1, 2, 0).contiguous().cpu().numpy()
-            frame = frame.astype(np.uint8)
+            if frame.ndim == 3 and frame.shape[0] in (1, 3, 4):  # (C,H,W)
+                frame = frame.permute(1, 2, 0).contiguous()
+            frame = frame.cpu().numpy().astype(np.uint8)
 
-        frame = np.asarray(frame)
-
-        if frame.ndim == 3:
-            if frame.shape[0] in (1, 3, 4):  
-                # If (C, H, W) → (H, W, C)
-                frame = np.transpose(frame, (1, 2, 0))
-            elif frame.shape[1] in (1, 3, 4) and frame.shape[2] not in (1, 3, 4):
-                frame = np.transpose(frame, (0, 2, 1))
-
-        if frame.ndim == 2:  # grayscale
+        # Ensure BGR
+        if frame.ndim == 2:
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        elif frame.shape[2] == 4:  # RGBA → BGR
+        elif frame.ndim == 3 and frame.shape[2] == 4:
             frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
-        elif frame.shape[2] == 3:
-            frame = frame[..., ::-1]  # RGB → BGR
-
-        logging.error(f"[DEBUG] Normalized frame shape: {frame.shape}, dtype={frame.dtype}")
-
-        x1, y1, x2, y2 = [
-            int(round(v.item() if isinstance(v, torch.Tensor) else v))
-            for v in track.get_state()
-        ]
-
-        H, W = frame.shape[:2]
-
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(W - 1, x2), min(H - 1, y2)
 
         frame_copy = frame.copy()
-        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        cv2.putText(frame_copy, "Unknown", (x1, max(0, y1 - 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-        jpg_b64 = frame_to_base64(frame=frame_copy)
+        H, W = frame_copy.shape[:2]
+
+        user_ids = []
+        for t in tracks:
+            x1, y1, x2, y2 = [
+                int(round(v.item() if isinstance(v, torch.Tensor) else v))
+                for v in t.get_state()
+            ]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(W - 1, x2), min(H - 1, y2)
+
+            cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            cv2.putText(
+                frame_copy,
+                "Unknown",
+                (x1, max(0, y1 - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2,
+            )
+            user_ids.append(getattr(t, "temp_id", str(uuid.uuid4())))
+
+        # Resize + encode once
+        if target_size:
+            frame_copy = cv2.resize(frame_copy, target_size)
+        success, encoded_img = cv2.imencode(".jpg", frame_copy)
+        if not success:
+            logging.error(f"[{self.camera_id}] Failed to encode unknown frame")
+            return
+        jpg_b64 = base64.b64encode(encoded_img).decode("utf-8")
 
         payload = {
             "camera_id": self.camera_id,
             "company_id": self.company_id,
-            "user_id": getattr(track, "temp_id", str(uuid.uuid4())),
+            "user_ids": user_ids,  # list of IDs
             "file": jpg_b64,
-            "type": "unknown",
+            "type": "unknown",  # distinguish from single
         }
 
         try:
             resp = requests.post(self.unknown_notify_url, json=payload)
             if resp.status_code == 200:
-                logging.info(f"[{self.camera_id}] Unknown notification sent for {payload['user_id']}")
+                logging.info(
+                    f"[{self.camera_id}] Unknown notification sent for {len(user_ids)} people"
+                )
             else:
-                logging.warning(f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}")
+                logging.warning(
+                    f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}"
+                )
         except Exception as e:
             logging.error(f"[{self.camera_id}] Failed to notify unknown: {e}")
 
@@ -390,7 +440,6 @@ class CameraStream:
                 tiles = self.split_into_tiles(frame)
                 for (x1_tile, y1_tile, x2_tile, y2_tile), crop_gpu in tiles:
                     crop_np = crop_gpu.cpu().numpy()
-                    # faces = self.app.get(crop_np, max_num=self.topk_per_tile)
                     try:
                         faces = self.app.get(crop_np, max_num=self.topk_per_tile)
                     except Exception as e:
@@ -429,7 +478,7 @@ class CameraStream:
                     det = new_dets[det_idx]
                     new_track = Track(det["bbox"], det["emb"])
                     new_track.conf = det["score"]
-                    self.tracks.append(new_track)
+                    # self.tracks.append(new_track)
                     # Unknown bookkeeping
                     new_track.temp_id = str(uuid.uuid4())
                     new_track.is_unknown = True  # start as unknown until identified
@@ -440,10 +489,7 @@ class CameraStream:
                     self.tracks.append(new_track)
 
                 self.tracks = [t for t in self.tracks if t.time_since_update <= 12]
-
-                # Face identification & unknown tracking
                 for t in self.tracks:
-                    # Filter out any None or empty tensors
                     valid_embs = [
                         e for e in t.emb_smooth if e is not None and e.numel() > 0
                     ]
@@ -481,15 +527,13 @@ class CameraStream:
 
                         t.name = details.get("name", "Unknown")
 
-                        # Attendance logic
                         last_action_time = self.last_seen.get(emp_id)
                         if (
                             last_action_time
                             and (now - last_action_time).seconds < self.cooldown
                         ):
-                            continue  # skip due to cooldown
+                            continue
 
-                        # Update cooldown tracker
                         self.last_seen[emp_id] = now
 
                         attendance_result, error = mark_attendance(
@@ -525,29 +569,29 @@ class CameraStream:
                         t.is_unknown = True
                         t.frames_seen += 1
                         t.unknown_frames = getattr(t, "unknown_frames", 0) + 1
-
-                        # Determine if we can send notification
-                        can_notify = t.unknown_frames >= getattr(
+                        if t.unknown_frames >= getattr(
                             self, "unknown_confirm_frames", 5
-                        ) and (
-                            t.last_notified_time is None
-                            or (now - t.last_notified_time).total_seconds()
-                            > getattr(self, "unknown_notify_cooldown", 60)
-                        )
+                        ):
+                            if t.temp_id not in self.pending_unknowns:
+                                self.pending_unknowns[t.temp_id] = t
 
-                        if can_notify:
-                            try:
-                                # notify_unknown should handle cropping, base64, bbox, camera id, timestamp
-                                self.notify_unknown(t, frame)
-                                t.last_notified_time = now
-                                t.unknown_notified = True
-                                logging.info(
-                                    f"[{self.camera_id}] Unknown person notified: {t.temp_id}"
-                                )
-                            except Exception as e:
-                                logging.exception(
-                                    f"[{self.camera_id}] Failed to notify unknown: {e}"
-                                )
+                time_since_last_notify = (
+                    datetime.now() - self.last_unknown_notify_time
+                ).total_seconds()
+                if (
+                    self.pending_unknowns
+                    and time_since_last_notify >= self.unknown_notify_interval
+                ):
+                    tracks_to_notify = list(self.pending_unknowns.values())
+                    self.notifier.submit(tracks_to_notify, frame)
+                    self.last_unknown_notify_time = datetime.now()
+                    for t in tracks_to_notify:
+                        t.last_notified_time = self.last_unknown_notify_time
+                        t.unknown_notified = True
+                    logging.info(
+                        f"[{self.camera_id}] Unknown notification sent for {len(tracks_to_notify)} people"
+                    )
+                    self.pending_unknowns.clear()
 
             torch.cuda.empty_cache()
             # Visualization
@@ -591,3 +635,6 @@ class CameraStream:
             self.frame_grabber.stop()
         cv2.destroyAllWindows()
         logging.info(f"[{self.camera_id}] Camera stopped and resources released.")
+
+        if hasattr(self, "notifier"):
+            self.notifier.stop()
