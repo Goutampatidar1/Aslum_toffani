@@ -13,21 +13,19 @@ from torch_kf import KalmanFilter, GaussianState
 from app.services.detection_services import get_user_details_by_unique_id
 from app.services.attendance_service import mark_attendance
 import uuid
-import base64
 import requests
 import os
 from dotenv import load_dotenv
+import numpy as np
+from app.services.attendance_service import frame_to_base64
 
 load_dotenv()
 
 
 DEVICE = "cuda"
-# logging.basicConfig(
-#     level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s"
-# )
 logging.basicConfig(
     level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
+    format="[%(asctime)s] %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
 )
 
 
@@ -49,7 +47,7 @@ class Track:
         if emb is not None:
             self.emb_smooth.append(emb.to(DEVICE))
 
-        # 🆕 Unknown face tracking fields
+        # Unknown face tracking fields
         self.temp_id = str(uuid.uuid4())  # unique ID for this track
         self.is_unknown = False  # flag if currently unknown
         self.unknown_frames = 0  # consecutive frames marked unknown
@@ -193,20 +191,16 @@ class CameraStream:
         self.app = self.init_face_app()
         self.tile_grid = (1, 1)
         self.detect_every_n_frames = 8
-        # self.topk_per_tile = 50
         self.topk_per_tile = 10
         self.conf_thresh = 0.40
         self.emb_match_thresh = 0.75
         self.cooldown = 60
 
         # Unknown-person handling
-        self.unknown_confirm_frames = 15
-        self.unknown_notify_cooldown = 180  
+        self.unknown_confirm_frames = 16
+        self.unknown_notify_cooldown = 30
         self.unknown_notify_url = os.getenv("THREAT_API", None)
-        # self.unknown_notify_headers = {
-        #     "Content-Type": "application/json"
-        # }  # add auth if needed
-        self.max_unknown_store = 200  # optional local store cap
+        self.max_unknown_store = 200  
         self.company_id = company_id
 
     def load_embeddings(self, path):
@@ -299,57 +293,62 @@ class CameraStream:
         return tiles
 
     def notify_unknown(self, track, frame):
-        pass
-        # x1, y1, x2, y2 = [int(round(v)) for v in track.get_state()]
-        # H, W = frame.shape[:2]
-        # x1, y1, x2, y2 = max(0, x1), max(0, y1), min(W, x2), min(H, y2)
+        logging.debug("FUNCTION notify_unknown called")
 
-        # # Copy the frame so original isn’t modified
-        # frame_copy = frame.copy()
+        if isinstance(frame, torch.Tensor):
+            frame = frame.permute(1, 2, 0).contiguous().cpu().numpy()
+            frame = frame.astype(np.uint8)
 
-        # cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        frame = np.asarray(frame)
 
-        # # Optionally add label
-        # cv2.putText(
-        #     frame_copy,
-        #     "Unknown",
-        #     (x1, max(0, y1 - 10)),
-        #     cv2.FONT_HERSHEY_SIMPLEX,
-        #     0.8,
-        #     (0, 0, 255),
-        #     2,
-        # )
+        if frame.ndim == 3:
+            if frame.shape[0] in (1, 3, 4):  
+                # If (C, H, W) → (H, W, C)
+                frame = np.transpose(frame, (1, 2, 0))
+            elif frame.shape[1] in (1, 3, 4) and frame.shape[2] not in (1, 3, 4):
+                frame = np.transpose(frame, (0, 2, 1))
 
-        # # Encode full frame as JPEG
-        # success, jpeg = cv2.imencode(".jpg", frame_copy)
-        # if not success:
-        #     raise RuntimeError("Failed to encode full frame")
+        if frame.ndim == 2:  # grayscale
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif frame.shape[2] == 4:  # RGBA → BGR
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+        elif frame.shape[2] == 3:
+            frame = frame[..., ::-1]  # RGB → BGR
 
-        # jpg_b64 = base64.b64encode(jpeg.tobytes()).decode("utf-8")
+        logging.error(f"[DEBUG] Normalized frame shape: {frame.shape}, dtype={frame.dtype}")
 
-        # payload = {
-        #     "camera_id": self.camera_id,
-        #     "company_id": self.company_id,
-        #     "user_id": getattr(track, "temp_id", str(uuid.uuid4())),
-        #     "file": jpg_b64,
-        #     "type": "unknown",
-        # }
+        x1, y1, x2, y2 = [
+            int(round(v.item() if isinstance(v, torch.Tensor) else v))
+            for v in track.get_state()
+        ]
 
-        # # Send to API
-        # resp = requests.post(
-        #     self.unknown_notify_url,
-        #     json=payload,
-        #     headers=self.unknown_notify_headers,
-        #     timeout=5,
-        # )
-        # if resp.status_code >= 400:
-        #     logging.warning(
-        #         f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}"
-        #     )
-        # else:
-        #     logging.info(
-        #         f"[{self.camera_id}] Unknown full-frame notification sent for {payload['temp_id']}"
-        #     )
+        H, W = frame.shape[:2]
+
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(W - 1, x2), min(H - 1, y2)
+
+        frame_copy = frame.copy()
+        cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        cv2.putText(frame_copy, "Unknown", (x1, max(0, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        jpg_b64 = frame_to_base64(frame=frame_copy)
+
+        payload = {
+            "camera_id": self.camera_id,
+            "company_id": self.company_id,
+            "user_id": getattr(track, "temp_id", str(uuid.uuid4())),
+            "file": jpg_b64,
+            "type": "unknown",
+        }
+
+        try:
+            resp = requests.post(self.unknown_notify_url, json=payload)
+            if resp.status_code == 200:
+                logging.info(f"[{self.camera_id}] Unknown notification sent for {payload['user_id']}")
+            else:
+                logging.warning(f"[{self.camera_id}] Notify API returned {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logging.error(f"[{self.camera_id}] Failed to notify unknown: {e}")
 
     def run(self):
         logging.info(f"[{self.camera_id}] Starting camera stream pipeline")
@@ -380,9 +379,6 @@ class CameraStream:
                 continue
 
             frame_idx += 1
-            # if frame_idx % 100 == 0:
-            #     logging.info(f"[{self.camera_id}] Frame {frame_idx}, Active Tracks: {len(self.tracks)}")
-
             H, W = frame.shape[:2]
 
             # Predict existing tracks
@@ -453,10 +449,8 @@ class CameraStream:
                     ]
                     if len(valid_embs) == 0:
                         continue
-
-                    # Compute average embedding for this track
                     try:
-                        emb = torch.mean(torch.stack(valid_embs), dim=0) 
+                        emb = torch.mean(torch.stack(valid_embs), dim=0)
                         emb = emb / (emb.norm() + 1e-9)
                     except RuntimeError as e:
                         logging.warning(
@@ -499,17 +493,23 @@ class CameraStream:
                         self.last_seen[emp_id] = now
 
                         attendance_result, error = mark_attendance(
-                            emp_id, action="checkin", frame=frame
+                            emp_id,
+                            camera_id=self.camera_id,
+                            action="checkin",
+                            frame=frame,
                         )
                         if error == "No active check-in found to check out":
                             attendance_result, error = mark_attendance(
-                                emp_id, action="checkin", frame=frame
+                                emp_id, self.camera_id, action="checkin", frame=frame
                             )
                             if not error:
                                 logging.info(f"{t.name} checked in at {now}")
                         elif error == "User already checked in today":
                             attendance_result, error = mark_attendance(
-                                emp_id, action="checkout", frame=frame
+                                emp_id,
+                                action="checkout",
+                                frame=frame,
+                                camera_id=self.camera_id,
                             )
                             if not error:
                                 logging.info(f"{t.name} checked out at {now}")

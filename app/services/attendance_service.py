@@ -1,121 +1,104 @@
-from datetime import datetime
-from bson import ObjectId
 import logging
 from app.config import db
-from app.models.attendance_model import Attendance
 import base64
 import cv2
 import torch
+import requests
+import os
+import numpy as np
+from dotenv import load_dotenv
 
+load_dotenv()
 
-def frame_to_base64(self , frame):
-    """Convert OpenCV or Torch tensor frame to base64 string."""
-    if isinstance(frame, torch.Tensor):
-        frame = frame.detach().cpu().numpy()
-    _, buffer = cv2.imencode(".jpg", frame)
-    return base64.b64encode(buffer).decode("utf-8")
+unknown_notify_url = os.getenv("THREAT_API", None)
 
-def mark_attendance(unique_user_id, action,  frame=None):
-    try:
+def frame_to_base64(frame, target_size=(640, 480)):
+    if frame is None or (hasattr(frame, 'size') and frame.size == 0):
+        raise ValueError("Input frame is empty or None")
 
+    if hasattr(frame, "to_ndarray"):
         try:
-            user_oid = unique_user_id
+            frame = frame.to_ndarray(format="bgr24")
+        except Exception:
+            frame = frame.to_ndarray()  
+
+    if isinstance(frame, torch.Tensor):
+        if frame.ndim == 3:
+            if frame.shape[0] <= 4:
+                frame = frame.permute(1, 2, 0)
+        frame = frame.contiguous().cpu().numpy()
+
+    frame = np.asarray(frame)
+
+    print(f"[DEBUG] Input frame shape: {frame.shape}, dtype: {frame.dtype}")
+
+    if frame.ndim == 2:
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    elif frame.ndim == 3:
+        channels = frame.shape[2]
+        if channels == 1:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif channels == 2:
+            frame = frame[..., 0]  # drop 2nd channel
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif channels == 3:
+            pass 
+        elif channels == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        else:
+            raise ValueError(f"Unsupported channel count: {channels}")
+    else:
+        raise ValueError(f"Unsupported frame dimensions: {frame.shape}")
+
+    frame = cv2.resize(frame, target_size)
+
+
+    if frame.dtype != np.uint8:
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+
+    print(f"[DEBUG] Final frame shape: {frame.shape}, dtype: {frame.dtype}")
+
+    success, encoded_img = cv2.imencode(".jpg", frame)
+    if not success:
+        raise ValueError("Image encoding failed")
+
+    return base64.b64encode(encoded_img).decode("utf-8")
+
+
+def mark_attendance(
+    unique_user_id,
+    camera_id,
+    company_id=None,
+    frame=None,
+):
+    try:
+        try:
+            user_oid = str(unique_user_id)
         except Exception:
             return None, "Invalid user ID format"
-
-        # Find user
         user = db.users.find_one({"unique_user_id": unique_user_id})
         if not user:
             return None, "User not found"
-
-        now = datetime.now()
-        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        frame_b64 = frame_to_base64(frame) if frame is not None else None
-
-        if action == "checkin":
-            # Prevent duplicate check-ins
-            existing_attendance = db.attendance.find_one(
-                {"user_id": user["_id"], "check_out": None}
-            )
-            if existing_attendance:
-                return None, "User already checked in today"
-
-            check_in_str = now.strftime("%Y-%m-%d %H:%M:%S")
-            attendance_doc = Attendance(
-                user_id=user["_id"],
-                check_in=check_in_str,
-                check_out=None,
-                total_hours=0,
-                check_in_image=frame_b64,
-            )
-            result = db.attendance.insert_one(attendance_doc.to_dict())
-            attendance_id = result.inserted_id
-
-            # Link attendance to user
-            db.users.update_one(
-                {"unique_user_id": user_oid}, {"$push": {"total_work": attendance_id}}
-            )
-
-            # Check if already marked in `total_attendence` (UI/stat tracking maybe)
-            already_exists = False
-            for entry in user.get("total_attendence", []):
-                entry_date_str = entry.get("date_time")
-                if entry_date_str:
-                    entry_dt = datetime.strptime(entry_date_str, "%Y-%m-%d %H:%M:%S")
-                    normalized_entry = entry_dt.replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
-                    if normalized_entry == today:
-                        already_exists = True
-                        break
-
-            if not already_exists:
-                db.users.update_one(
-                    {"_id": user["_id"]},
-                    {
-                        "$push": {
-                            "total_attendence": {
-                                "date_time": check_in_str,
-                            }
-                        }
-                    },
-                )
-
-            attendance_doc._id = str(attendance_id)
-            attendance_doc.user_id = str(user["_id"])
-
-            return attendance_doc, None
-
-        elif action == "checkout":
-            attendance = db.attendance.find_one(
-                {"user_id": user["_id"], "check_out": None}, sort=[("check_in", -1)]
-            )
-
-            if not attendance:
-                return None, "No active check-in found to check out"
-
-            check_in_str = attendance["check_in"]
-            check_in = datetime.strptime(check_in_str, "%Y-%m-%d %H:%M:%S")
-            check_out = datetime.now()
-            check_out_str = check_out.strftime("%Y-%m-%d %H:%M:%S")
-
-            total_hours = round((check_out - check_in).total_seconds() / 3600, 2)
-
-            db.attendance.update_one(
-                {"_id": attendance["_id"]},
-                {
-                    "$set": {
-                        "check_out": check_out_str,
-                        "total_hours": total_hours,
-                    }
-                },
-            )
-
-            return attendance, None
-
+          
+        b64_string = frame_to_base64(frame=frame)   
+        if b64_string == None:
+            logging.error("Frame BASE 64 FAILS")           
+        payload = {
+            "camera_id": camera_id,
+            "company_id": user["company_id"],
+            "user_id": user["company_user_id"],
+            "file": b64_string,
+            "type": "known",
+        }
+        resp = requests.post(
+            unknown_notify_url,
+            json=payload,
+        )
+        if resp.status_code == 200:
+            return True, None
         else:
-            return None, "Invalid action. Use 'checkin' or 'checkout'"
-
+            return None, "SIR API ERROR"
     except Exception as e:
         logging.error(f"Error in mark_attendance: {e}")
         return None, "Internal server error"
